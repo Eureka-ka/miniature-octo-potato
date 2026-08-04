@@ -97,13 +97,17 @@ def run():
             dim_scores[dim] = float((A[f"A{j+1}"] @ Rj) @ C.GRADE_SCORES)
         r["B"] = B
         r["score"] = float(score)
-        r["level"] = C.level_by_score(score)
         r["dim_scores"] = dim_scores
+    # 相对分位定级：按批次得分分布拉开五级（增强区分度）
+    bands = C.percentile_bands([r["score"] for r in usable])
+    for r in usable:
+        r["level"] = C.level_by_band(r["score"], bands)
 
     # ---- 导出 ----
     export_excel(rows, usable, weights, os.path.join(C.OUT, "problem1_results.xlsx"))
     export_csv(usable, os.path.join(C.OUT, "problem1_indicators.csv"))
     C.save_json({"refs": refs,
+                 "bands": bands,
                  "centers": {k: v.tolist() for k, v in centers.items()},
                  "widths": {k: v for k, v in widths.items()},
                  "weights": {k: {"w": v["w"].tolist(), "CR": v["CR"], "CI": v["CI"], "lam": v["lam"]}

@@ -33,6 +33,20 @@ def level_by_score(s):
     if s >= 35: return "及格"
     return "不及格"
 
+def percentile_bands(scores, pcts=(85, 65, 40, 20)):
+    """按批次得分分位确定五级阈值（相对定级）：
+    返回 {'优秀':t85, '良好':t65, '中等':t40, '及格':t20}，score>=t 为该级及以上。"""
+    arr = np.asarray(scores, dtype=float)
+    t85, t65, t40, t20 = np.percentile(arr, list(pcts))
+    return {"优秀": float(t85), "良好": float(t65), "中等": float(t40), "及格": float(t20)}
+
+def level_by_band(score, bands):
+    if score >= bands["优秀"]: return "优秀"
+    if score >= bands["良好"]: return "良好"
+    if score >= bands["中等"]: return "中等"
+    if score >= bands["及格"]: return "及格"
+    return "不及格"
+
 # ---------------- AHP（判断矩阵来自 AHP_A.m）----------------
 JUDGMENT_MATRICES = {
     "M(一级)": np.array([[1, 1/2, 2, 3],
