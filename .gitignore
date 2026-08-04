@@ -1,4 +1,8 @@
-﻿# Common
+# Python
+__pycache__/
+*.pyc
+
+# Common
 .DS_Store
 Thumbs.db
 *.log

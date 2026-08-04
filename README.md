@@ -1,7 +1,42 @@
-﻿# git
+# 选题A：数学建模论文智能评估与优化（问题1/2优化 + 问题3完成）
 
-This repository was initialized from `C:\Users\huangxiyan\Desktop\git`.
+本仓库对 2025 年数学建模大赛“A 题 数学建模论文智能评估系统与多智能体优化方法”进行建模，
+在原有问题1（AHP+模糊综合评价）、问题2（特征提取+灰色关联分析）的基础上优化并补全，完成问题3。
 
-## Getting Started
+## 目录结构
+```
+选题A/
+├─ code/                  # 全部 Python 代码
+│  ├─ common.py           # 共享工具：文本提取、关键词词典、AHP、隶属度、PIL图表
+│  ├─ problem1.py         # 问题1：综合评价指标体系与自动评分模型
+│  ├─ problem2_features.py# 问题2：12项可量化特征提取与质量得分
+│  ├─ problem2_stats.py   # 问题2：GRA、相关分析、回归预测、调整因子、小样本稳定性
+│  ├─ problem3.py         # 问题3：基线评估、AI痕迹检测、逻辑断层、修改方案、优化预测
+│  ├─ build_report.py     # 生成中文 Word 报告
+│  └─ run_all.py          # 一键运行全部流程
+├─ output/
+│  ├─ problem1_results.xlsx / problem1_indicators.csv   # 30篇评分结果
+│  ├─ problem2_features.xlsx/csv、problem2_stats.xlsx   # 特征与统计分析
+│  ├─ problem3_results.xlsx                             # 优化方案与预测
+│  ├─ figs/*.png                                        # 图表
+│  └─ 选题A_建模报告.docx / .pdf                        # 完整报告
+└─ README.md
+```
 
-Nothing here yet — content coming soon.
+## 运行环境
+- 使用 Codex 捆绑 Python（含 pdfplumber、pandas、numpy、openpyxl、python-docx、PIL、reportlab），无需联网安装。
+- 输入数据读取自 `E:\数学建模大赛\选题D\选题A\附件{1,2,3}`（绝对路径，不改动原文件）。
+- 运行：`python code/run_all.py`（依次执行问题1→问题2→问题3→生成报告）。
+
+## 主要结论
+- 问题1：4个一级维度、16个二级指标，AHP权重由专家判断矩阵复算（全部 CR<0.1），连续隶属度+综合得分分级。
+  30篇中29篇自动评分：良好16篇、中等12篇、及格1篇；25.pdf 为纯图片扫描件（无文字层）已标记排除。
+- 问题2：关键特征为逻辑连词总频次、规范编号公式占比、参考文献数量；n=9 小样本下留一交叉验证 R²<0，
+  说明特征预测模型外推能力不足，据此采用可靠性加权的质量调整因子（本数据下保守取 k≈1）。
+- 问题3：3-1/3-2/3-3 基线 81.54(优秀)/66.11(良好)/81.01(优秀)，AI辅助指数均较低（离线统计特征法），
+  针对薄弱指标给出修改方案后预测得分提升至 82.81/70.84/84.57。
+
+## 已知限制
+- 25.pdf、2-8.pdf 为纯图片扫描件，无文字层，不参与自动特征提取与统计建模（报告中有说明，脚本预留人工补录入口）。
+- AI生成痕迹检测为离线文本统计启发式，非大语言模型困惑度检测，结果仅供参考。
+- 问题3的“优化后得分”为基于修改建议的模型模拟预测，非论文重写。
