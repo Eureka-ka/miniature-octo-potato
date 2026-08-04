@@ -240,7 +240,7 @@ def compute_refs(raw_by_ind, kinds):
         a = np.asarray(arr, dtype=float)
         k = kinds[ind]
         if k == "ratio":
-            ref = 0.6                       # 描述性词典覆盖率达标线 60%
+            ref = 0.8                       # 覆盖率/达成率达标线 80%
         elif k == "density":
             ref = float(np.percentile(a, 80))
         elif k == "low":
@@ -312,7 +312,7 @@ def calibrate_centers(s_by_ind):
     centers, widths = {}, {}
     for ind, arr in s_by_ind.items():
         a = np.asarray(arr, dtype=float)
-        if float(np.percentile(a, 90) - np.percentile(a, 10)) < 1e-9:
+        if float(np.percentile(a, 90) - np.percentile(a, 10)) < 0.15:
             # 常数指标：按绝对水平映射（固定中心），避免“人人中等”的伪居中
             c = np.array([0.15, 0.30, 0.50, 0.70, 0.85])
             w = 0.20

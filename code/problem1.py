@@ -15,12 +15,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 import common as C
+import quantify
 
 IND_ORDER = [f"u{i}{j}" for i in range(1, 5) for j in range(1, 5)]
-KIND = {"u11": "density", "u12": "ratio", "u13": "ratio", "u14": "low",
-        "u21": "ratio", "u22": "density", "u23": "ratio", "u24": "ratio",
-        "u31": "density", "u32": "ratio", "u33": "ratio", "u34": "ratio",
-        "u41": "ratio", "u42": "ratio", "u43": "count", "u44": "low"}
+KIND = quantify.KIND
 
 def dim_inds(dim):
     return [ind for ind in IND_ORDER if C.INDICATOR_META[ind][1] == dim]
@@ -58,7 +56,7 @@ def run():
             continue
         t = C.analyze_text(pages, full)
         topic = C.classify_topic(full)
-        raw = C.p1_raw_indicators(t, topic)
+        raw = quantify.quantify_all(t, topic)
         rows.append(dict(base, t=t, topic=topic, raw=raw))
 
     usable = [r for r in rows if not r.get("image_only") and r.get("topic") != "人工审核"]

@@ -11,6 +11,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 import common as C
 import problem1
+import quantify
 
 CHAPTER_GROUPS = [
     ["摘要", "abstract"], ["引言", "绪论", "introduction"],
@@ -71,7 +72,7 @@ def run():
         t = C.analyze_text(pages, full)
         feats = extract_features(pages, full, t)
         topic = C.classify_topic(full)
-        raw = C.p1_raw_indicators(t, topic if topic != "人工审核" else "B")
+        raw = quantify.quantify_all(t, topic if topic != "人工审核" else "B")
         rows.append(dict(base, feats=feats, raw=raw, topic=topic))
 
     usable = [r for r in rows if r.get("feats") is not None]

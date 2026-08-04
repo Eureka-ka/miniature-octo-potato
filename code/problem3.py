@@ -19,6 +19,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 import common as C
 import problem1
+import quantify
 
 BOILERPLATE = ["综上所述", "本研究", "值得注意的是", "总而言之", "进一步", "此外",
                "通过上述", "本文通过", "随着", "不仅", "而且", "在此基础上"]
@@ -178,7 +179,7 @@ def run():
         topic = C.classify_topic(full)
         if topic == "人工审核":
             topic = "A"
-        raw = C.p1_raw_indicators(t, topic)
+        raw = quantify.quantify_all(t, topic)
         s_scores = {ind: float(C.apply_refs(np.array([raw[ind]]), kinds[ind], refs[ind])[0])
                     for ind in problem1.IND_ORDER}
         norm_scores = {dim: [s_scores[ind] for ind in problem1.dim_inds(dim)] for dim in C.U_ORDER}
