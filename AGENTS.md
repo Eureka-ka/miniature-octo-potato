@@ -70,7 +70,7 @@ output/
 ## 六、关键可调参数（改这里即可调结果）
 - `common.py`：`GRADE_SCORES`、`level_by_score` / `percentile_bands`、`JUDGMENT_MATRICES`（AHP判断矩阵）、各关键词词典、`calibrate_centers` 分位与常数阈值(0.15)、`compute_refs` 达标线。
 - `quantify.py`：`KIND`（每个指标的归一方式）、各 `q_uXX` 量化函数、`AI_WEIGHTS`/`AI_LEVELS`、`uplift_for`、`TEMPLATE`。
-- `problem2_stats.py`：`KEY_FEATURES`（预测模型自变量）、`LAMBDA`（岭回归正则）、`LAMBDA_F`（调整因子校准强度，当前0.30）。
+- `problem2_stats.py`：`KEY_FEATURES`（预测模型自变量，当前=["内容字符数"]）、`LAMBDA`（岭回归正则）、`LAMBDA_F`（调整因子校准强度，当前0.30）。
 - 随机种子：固定（Bootstrap seed=42、置换 seed=7），结果可复现。
 
 ## 七、已知限制

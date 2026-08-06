@@ -4,7 +4,7 @@
 方法：
 - 灰色关联度(GRA)：综合维度/原始特征 vs 质量得分；特征剖面 vs 理想剖面。
 - Pearson/Spearman 相关 + Bootstrap 95%置信区间 + 置换检验 p 值。
-- 关键特征识别：GRA + 相关显著性 + 语义（逻辑连接、公式规范、参考文献）三重证据。
+- 关键特征识别：GRA + 相关显著性 + 方向/可解释性（当前选取 内容字符数 作为预测自变量）。
 - 质量预测模型：标准化多元线性回归与岭回归（λ=1.0），LOO-CV 外推评估。
 - 小样本稳定性：LOO-CV(R²/RMSE/MAE)、Bootstrap(1000次)系数分布、单样本剔除敏感性。
 - 质量调整因子：k_i = 1 + λ·(F_i-F̄)/F̄（λ=0.30），基于特征剖面相对位置校准基础得分。
@@ -22,7 +22,7 @@ RNG = np.random.default_rng(42)
 RHO = 0.5
 LAMBDA = 1.0       # 岭回归正则参数
 LAMBDA_F = 0.30    # 质量调整因子：特征剖面校准强度
-KEY_FEATURES = ["逻辑连词总频次", "规范编号公式占比", "参考文献数量"]
+KEY_FEATURES = ["内容字符数"]   # 预测模型自变量（单特征，正相关且可解释为“内容充实度”）
 
 def pearson(x, y):
     x = np.asarray(x, float); y = np.asarray(y, float)
@@ -174,7 +174,7 @@ def run():
         b = ridge(standardize(X_raw[tr]), standardize(y[tr]))[1:]
         rel = np.abs((b - beta_std) / (np.abs(beta_std) + 1e-9)) * 100
         sens.append({"剔除论文": names[i],
-                     **{f"β({KEY_FEATURES[j]})变化%": round(float(rel[j]), 1) for j in range(3)},
+                     **{f"β({KEY_FEATURES[j]})变化%": round(float(rel[j]), 1) for j in range(len(KEY_FEATURES))},
                      "最大变化%": round(float(rel.max()), 1)})
     sens_df = pd.DataFrame(sens)
 
@@ -234,11 +234,10 @@ def export_excel(corr_df, key_df, gra_dim, dim_names, gra_raw, bs_df, loo_df, se
     ws4 = wb.create_sheet("关键特征排序")
     sheet(ws4, list(key_df.columns), key_df.values.tolist())
     ws5 = wb.create_sheet("回归模型")
-    rows5 = [["预测特征", "标准化系数(岭)", "原始尺度系数", "截距(原始)"],
-             [keyfeats[0], round(float(beta_std[0]), 4), round(float(beta_orig[0]), 4), ""],
-             [keyfeats[1], round(float(beta_std[1]), 4), round(float(beta_orig[1]), 4), ""],
-             [keyfeats[2], round(float(beta_std[2]), 4), round(float(beta_orig[2]), 4), ""],
-             ["截距", "", "", round(float(intercept_orig), 4)],
+    rows5 = [["预测特征", "标准化系数(岭)", "原始尺度系数", "截距(原始)"]]
+    for jf in range(len(keyfeats)):
+        rows5.append([keyfeats[jf], round(float(beta_std[jf]), 4), round(float(beta_orig[jf]), 4), ""])
+    rows5 += [["截距", "", "", round(float(intercept_orig), 4)],
              ["样本内R²/RMSE/MAE", round(r2_in, 4), round(rmse_in, 4), round(mae_in, 4)],
              ["LOO-CV R²/RMSE/MAE", round(r2_loo, 4), round(rmse_loo, 4), round(mae_loo, 4)],
              ["OLS LOO-CV R²", round(r2_loo_o, 4), "（对比）", "", ""]]
