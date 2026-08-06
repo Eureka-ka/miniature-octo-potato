@@ -7,8 +7,7 @@
 - 关键特征识别：GRA + 相关显著性 + 语义（逻辑连接、公式规范、参考文献）三重证据。
 - 质量预测模型：标准化多元线性回归与岭回归（λ=1.0），LOO-CV 外推评估。
 - 小样本稳定性：LOO-CV(R²/RMSE/MAE)、Bootstrap(1000次)系数分布、单样本剔除敏感性。
-- 质量调整因子：k_i = 1 + α·w·(ŷ_i-Q_i)/Q_i + β·(F_i-F̄)/F̄，
-  其中 w=clip(R²_LOO/0.5,0,1) 为模型外推可靠性权重，F_i 为特征剖面与理想剖面的GRA。
+- 质量调整因子：k_i = 1 + λ·(F_i-F̄)/F̄（λ=0.30），基于特征剖面相对位置校准基础得分。
 """
 import os
 import numpy as np
@@ -21,10 +20,8 @@ import problem2_features
 
 RNG = np.random.default_rng(42)
 RHO = 0.5
-ALPHA = 0.3        # 回归调整分量的收缩系数
-BETA = 0.1         # 特征剖面分量的收缩系数
 LAMBDA = 1.0       # 岭回归正则参数
-R2_REF = 0.5       # “可接受外推能力”基准
+LAMBDA_F = 0.30    # 质量调整因子：特征剖面校准强度
 KEY_FEATURES = ["逻辑连词总频次", "规范编号公式占比", "参考文献数量"]
 
 def pearson(x, y):
@@ -181,11 +178,10 @@ def run():
                      "最大变化%": round(float(rel.max()), 1)})
     sens_df = pd.DataFrame(sens)
 
-    # ---- 质量调整因子 ----
+    # ---- 质量调整因子（特征剖面校准，不依赖回归外推能力）----
     Q = y; Qpred = pred_r
-    w = float(np.clip(r2_loo / R2_REF, 0.0, 1.0))     # 外推可靠性权重
     Fmean = F.mean()
-    k = 1 + ALPHA * w * (Qpred - Q) / np.maximum(Q, 1e-9) + BETA * (F - Fmean) / max(Fmean, 1e-9)
+    k = 1 + LAMBDA_F * (F - Fmean) / max(Fmean, 1e-9)
     Qadj = Q * k
     adj_df = pd.DataFrame({"论文": names, "基础得分Q": np.round(Q, 2),
                            "特征预测得分(岭)": np.round(Qpred, 2),
@@ -199,7 +195,7 @@ def run():
     export_excel(corr_df, key_df, gra_dim, dim_names, gra_raw, bs_df, loo_df, sens_df,
                  adj_df, KEY_FEATURES, beta_std, beta_orig, intercept_orig,
                  r2_in, rmse_in, mae_in, r2_loo, rmse_loo, mae_loo,
-                 r2_loo_o, rmse_loo_o, mae_loo_o, w, os.path.join(C.OUT, "problem2_stats.xlsx"))
+                 r2_loo_o, rmse_loo_o, mae_loo_o, os.path.join(C.OUT, "problem2_stats.xlsx"))
     charts(y, names, corr_df, gra_dim, dim_names, bs_df, KEY_FEATURES, loo_df, Q, Qadj)
 
     print("===== 问题2 统计结果 =====")
@@ -207,14 +203,14 @@ def run():
     print("关键特征:", KEY_FEATURES)
     print(key_df[["特征", "Pearson_r", "置换检验p", "GRA"]].to_string(index=False))
     print(f"岭回归 样本内 R2={r2_in:.3f} RMSE={rmse_in:.3f} | LOO-CV R2={r2_loo:.3f} RMSE={rmse_loo:.3f} MAE={mae_loo:.3f}")
-    print(f"OLS LOO-CV R2={r2_loo_o:.3f}（小样本不稳定） | 可靠性权重 w={w:.3f}")
+    print(f"OLS LOO-CV R2={r2_loo_o:.3f}（小样本不稳定）")
     print(adj_df.to_string(index=False))
     return locals()
 
 def export_excel(corr_df, key_df, gra_dim, dim_names, gra_raw, bs_df, loo_df, sens_df,
                  adj_df, keyfeats, beta_std, beta_orig, intercept_orig,
                  r2_in, rmse_in, mae_in, r2_loo, rmse_loo, mae_loo,
-                 r2_loo_o, rmse_loo_o, mae_loo_o, w, path):
+                 r2_loo_o, rmse_loo_o, mae_loo_o, path):
     wb = Workbook()
     ca = Alignment(horizontal="center", vertical="center")
     thin = Border(*(Side(style="thin"),) * 4)

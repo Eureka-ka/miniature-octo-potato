@@ -57,7 +57,7 @@ output/
 ### 问题2（problem2_features.py + problem2_stats.py）
 - 12 项可量化特征（在剔除代码附录页后的正文上计算：内容页数/内容字符数、行首标题章节、行级公式、逐式编号、引用-条目）→ Z-score标准化 → 4 个综合维度（篇幅/公式/逻辑连接/参考文献）；质量得分沿用问题1评分模型（n=9）。
 - 分析：灰色关联度(GRA)、Pearson/Spearman+Bootstrap95%CI+置换检验、关键特征识别、岭回归(λ=1.0)+OLS、LOO-CV、Bootstrap(1000次)、单样本剔除敏感性。
-- 质量调整因子：k=1+α·w·(ŷ−Q)/Q+β·(F−F̄)/F̄，α=0.3、β=0.1、w=clip(R²_LOO/0.5,0,1)；本数据 LOO R²<0 → w=0 → k≈1（不调整）。
+- 质量调整因子：k=1+λ·(F−F̄)/F̄（λ=0.30），基于特征剖面相对位置校准基础得分，不依赖回归外推能力。
 - 关键结论：可量化文本特征与质量得分的关联整体较弱且方向不一（篇幅类弱正相关、连词/公式规范类弱负相关）；小样本下模型定位为"关联识别与方向判断"，不宜直接打分。
 
 ### 问题3（problem3.py）
@@ -70,7 +70,7 @@ output/
 ## 六、关键可调参数（改这里即可调结果）
 - `common.py`：`GRADE_SCORES`、`level_by_score` / `percentile_bands`、`JUDGMENT_MATRICES`（AHP判断矩阵）、各关键词词典、`calibrate_centers` 分位与常数阈值(0.15)、`compute_refs` 达标线。
 - `quantify.py`：`KIND`（每个指标的归一方式）、各 `q_uXX` 量化函数、`AI_WEIGHTS`/`AI_LEVELS`、`uplift_for`、`TEMPLATE`。
-- `problem2_stats.py`：`KEY_FEATURES`（预测模型自变量）、`ALPHA`/`BETA`/`LAMBDA`/`R2_REF`。
+- `problem2_stats.py`：`KEY_FEATURES`（预测模型自变量）、`LAMBDA`（岭回归正则）、`LAMBDA_F`（调整因子校准强度，当前0.30）。
 - 随机种子：固定（Bootstrap seed=42、置换 seed=7），结果可复现。
 
 ## 七、已知限制
