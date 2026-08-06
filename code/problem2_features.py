@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
-"""问题2-特征工程：提取10篇同赛题论文的可量化文本特征（12项），
-极差归一化为4个综合维度，并沿用问题1的AHP-模糊综合评价（参照问题1校准参数）
-计算每篇论文的综合质量得分。2-8.pdf为图像型论文，予以排除（n=9）。
+"""问题2-特征工程：提取10篇同赛题论文的可量化文本特征（12项）。
+
+升级点（与问题1专属量化对齐）：
+1) 提取前剔除代码附录页（strip_code_pages），总页数→内容页数、总字符数→内容字符数，
+   公式/连词/参考文献/章节等均在正文上计算，避免代码页污染。
+2) 章节完整度用行首标题级检测(line_start_keyword)；公式总数用行级公式检测(detect_equation_lines)；
+   规范编号公式占比用逐式编号(count_labeled_equations)；参考文献数量用引用-条目(parse_references)。
+
+质量得分仍沿用问题1的AHP-模糊综合评价（参照问题1校准参数，使用全文文本以保持口径不变）。
+2-8.pdf为图像型论文，予以排除（n=9）。
 """
 import os
 import numpy as np
@@ -13,36 +20,42 @@ import common as C
 import problem1
 import quantify
 
+# 行首标题级章节词表（收紧，避免正文“模型：…”误判；供 line_start_keyword 使用）
 CHAPTER_GROUPS = [
-    ["摘要", "abstract"], ["引言", "绪论", "introduction"],
-    ["模型", "建模", "模型构建"], ["结果", "仿真结果", "实验结果"],
-    ["结论", "小结", "conclusion"], ["参考文献", "references", "reference"],
+    ["摘要"],
+    ["引言", "绪论", "introduction"],
+    ["模型建立", "模型构建", "模型的建立", "建模", "模型求解", "求解方法"],
+    ["结果分析", "仿真结果", "实验结果", "结果与分析"],
+    ["结论", "小结", "总结", "conclusion"],
+    ["参考文献", "references"],
 ]
-FEATURES = ["总页数", "总字符数", "章节完整度", "段落平均长度",
-            "公式总数", "公式密度(公式数/总字符)", "规范编号公式占比",
-            "逻辑连词总频次", "连词密度(连词数/总字符)", "参考文献数量"]
+FEATURES = ["内容页数", "内容字符数", "章节完整度", "段落平均长度",
+            "公式总数", "公式密度(公式数/内容字符)", "规范编号公式占比",
+            "逻辑连词总频次", "连词密度(连词数/内容字符)", "参考文献数量"]
 GROUP_DEF = {
-    "篇幅结构特征综合得分": ["总页数", "总字符数", "章节完整度", "段落平均长度"],
-    "公式特征综合得分": ["公式总数", "公式密度(公式数/总字符)", "规范编号公式占比"],
-    "逻辑连接特征综合得分": ["逻辑连词总频次", "连词密度(连词数/总字符)"],
+    "篇幅结构特征综合得分": ["内容页数", "内容字符数", "章节完整度", "段落平均长度"],
+    "公式特征综合得分": ["公式总数", "公式密度(公式数/内容字符)", "规范编号公式占比"],
+    "逻辑连接特征综合得分": ["逻辑连词总频次", "连词密度(连词数/内容字符)"],
     "参考文献特征综合得分": ["参考文献数量"],
 }
 NEGATIVE = {"段落平均长度"}
 
 def extract_features(pages, full, t):
-    low = full.lower()
-    chapter_hit = sum(1 for grp in CHAPTER_GROUPS if any(w in low for w in grp))
+    """在“剔除代码页后的正文”上计算12项特征。pages/full 为正文页列表与正文全文。"""
+    chapter_hit = sum(1 for grp in CHAPTER_GROUPS if quantify.line_start_keyword(full, grp))
+    eq_idx, _ = quantify.detect_equation_lines(full)
+    n_eq = len(eq_idx)
     feats = {
-        "总页数": t["pages"],
-        "总字符数": t["total_chars"],
+        "内容页数": len(pages),
+        "内容字符数": t["total_chars"],
         "章节完整度": round(chapter_hit / len(CHAPTER_GROUPS), 3),
         "段落平均长度": round(t["total_chars"] / max(1, len(t["paragraphs"])), 2),
-        "公式总数": t["formula_count"],
-        "公式密度(公式数/总字符)": round(t["formula_count"] / max(1, t["total_chars"]), 6),
-        "规范编号公式占比": round(t["labeled_formula_count"] / max(1, t["formula_count"]), 3),
+        "公式总数": n_eq,
+        "公式密度(公式数/内容字符)": round(n_eq / max(1, t["total_chars"]), 6),
+        "规范编号公式占比": round(quantify.count_labeled_equations(full, eq_idx) / max(1, n_eq), 3),
         "逻辑连词总频次": t["connector_count"],
-        "连词密度(连词数/总字符)": round(t["connector_count"] / max(1, t["total_chars"]), 6),
-        "参考文献数量": t["ref_count"],
+        "连词密度(连词数/内容字符)": round(t["connector_count"] / max(1, t["total_chars"]), 6),
+        "参考文献数量": quantify.parse_references(full)[1],
     }
     return feats
 
@@ -69,11 +82,15 @@ def run():
         if img:
             rows.append(base)
             continue
-        t = C.analyze_text(pages, full)
-        feats = extract_features(pages, full, t)
+        # 质量得分用全文（保持口径不变）；特征用剔除代码页后的正文
+        t_full = C.analyze_text(pages, full)
+        body_pages, body_full = quantify.strip_code_pages(pages)
+        t_body = C.analyze_text(body_pages, body_full)
+        feats = extract_features(body_pages, body_full, t_body)
         topic = C.classify_topic(full)
-        raw = quantify.quantify_all(t, topic if topic != "人工审核" else "B")
-        rows.append(dict(base, feats=feats, raw=raw, topic=topic))
+        raw = quantify.quantify_all(t_full, topic if topic != "人工审核" else "B")
+        rows.append(dict(base, feats=feats, raw=raw, topic=topic,
+                         code_pages=len(pages) - len(body_pages), total_pages=len(pages)))
 
     usable = [r for r in rows if r.get("feats") is not None]
     df = pd.DataFrame([{"论文名称": r["论文名称"]} | r["feats"] for r in usable])
@@ -100,23 +117,22 @@ def run():
     df["赛题类型"] = [r["topic"] for r in usable]
 
     df_norm = norm_features(df)
-    # 输出列：原始特征 + 归一 + 综合维度 + 得分等级
     out_cols = ["论文名称", "数据来源", "赛题类型"] + FEATURES + \
                [c + "_归一" for c in FEATURES if c != "章节完整度"] + \
                list(GROUP_DEF.keys()) + ["综合质量得分", "等级"]
-    # 数据来源列已在 df 中？
     df_norm["数据来源"] = "自动识别"
     df_norm["赛题类型"] = df["赛题类型"]
     df_out = df_norm[out_cols]
     df_out.to_csv(os.path.join(C.OUT, "problem2_features.csv"), index=False, encoding="utf-8-sig")
     export_excel(df_out, os.path.join(C.OUT, "problem2_features.xlsx"))
-    # 保存供统计脚本使用
+    # 保存供统计脚本使用（含代码页数供报告）
     C.save_json([{"name": r["论文名称"], "feats": r["feats"], "score": r["score"],
-                  "level": r["level"], "topic": r["topic"]} for r in usable],
+                  "level": r["level"], "topic": r["topic"],
+                  "code_pages": r["code_pages"], "total_pages": r["total_pages"]} for r in usable],
                 os.path.join(C.OUT, "problem2_papers.json"))
-    print("===== 问题2 特征与质量得分 =====")
+    print("===== 问题2 特征与质量得分（已剔除代码页）=====")
     for r in usable:
-        print(f"{r['论文名称']} | 得分 {r['score']:.2f} | {r['level']}")
+        print(f"{r['论文名称']} | 总页数{r['total_pages']} 代码页{r['code_pages']} 内容页数{r['feats']['内容页数']} | 得分 {r['score']:.2f} | {r['level']}")
     return usable, df_out
 
 def export_excel(df, path):

@@ -174,6 +174,32 @@ def extract_model_names(clean):
                 found[cat].add(w)
     return found
 
+# ---------------- 代码页检测（剔除代码附录，避免污染篇幅/公式特征）----------------
+CODE_KEYWORDS = [
+    "import ", "def ", "for i in", "while ", "print(", "return ", "subplot", "plt.",
+    "numpy", "pandas", "if __name__", "class ", "end;", "library(", "read.table",
+    "summary(", "lm(", "ggplot", "int main", "scanf", "printf", "#include", "void ",
+    "else if", "try:", "except", "lambda ", "range(", "for i=", "= [", "disp(",
+    "eig(", "zeros(", "ones(", "repmat", "read.csv", "pd.read", "plt.show",
+]
+
+def is_code_page(text):
+    """判断一页是否以程序代码为主（避免把数学公式页/内容页误判为代码）。"""
+    if not text or len(text) < 40:
+        return False
+    body = re.sub(r"\s+", "", text)
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", body))
+    ratio = cjk / max(1, len(body))
+    kw = sum(1 for k in CODE_KEYWORDS if k.lower() in text.lower())
+    return kw >= 2 or (kw >= 1 and ratio < 0.25)
+
+def strip_code_pages(pages):
+    """剔除代码页，返回 (正文页列表, 正文全文)。若全部页被判为代码则回退为全部页。"""
+    body = [p for p in pages if not is_code_page(p)]
+    if not body:
+        body = pages
+    return body, "\n".join(body)
+
 # ---------------- 各指标用到的词典 ----------------
 CONN_CAT = {
     "因果": ["因此", "所以", "因而", "故", "从而", "由此", "据此", "于是", "故而"],
