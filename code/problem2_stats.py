@@ -116,16 +116,14 @@ def run():
     feats_raw = np.array([[p["feats"][f] for f in problem2_features.FEATURES] for p in papers], float)
     feats_norm = feats_raw.copy()
     for j, f in enumerate(problem2_features.FEATURES):
-        if f == "章节完整度":
-            continue
-        feats_norm[:, j] = C.minmax_norm(feats_raw[:, j], -1 if f in problem2_features.NEGATIVE else 1)
+        feats_norm[:, j] = C.zscore_norm(feats_raw[:, j], -1 if f in problem2_features.NEGATIVE else 1)  # 反向指标取负
     dim_names = ["篇幅结构", "公式特征", "逻辑连接", "参考文献"]
     dims = np.column_stack([
         feats_norm[:, [problem2_features.FEATURES.index(c) for c in cols]].mean(axis=1)
         for cols in problem2_features.GROUP_DEF.values()])
 
-    # ---- 灰色关联度 ----
-    y_norm = C.minmax_norm(y)
+    # ---- 灰色关联度（参考序列与特征同尺度：均用 Z-score）----
+    y_norm = C.zscore_norm(y)
     gra_dim = gra_seq(y_norm, dims.T)
     gra_raw = gra_seq(y_norm, feats_norm.T)
     F = gra_to_ideal(dims)                      # 特征剖面 vs 理想剖面

@@ -63,12 +63,10 @@ def norm_features(df):
     df = df.copy()
     for col in FEATURES:
         arr = df[col].astype(float).values
-        if col == "章节完整度":
-            continue  # 本身0~1
-        s = C.minmax_norm(arr, -1 if col in NEGATIVE else 1)
-        df[col + "_归一"] = np.round(s, 6)
+        z = C.zscore_norm(arr, -1 if col in NEGATIVE else 1)   # 反向指标取负
+        df[col + "_z"] = np.round(z, 6)
     for gname, cols in GROUP_DEF.items():
-        df[gname] = df[[c + "_归一" if c != "章节完整度" else c for c in cols]].mean(axis=1)
+        df[gname] = df[[c + "_z" for c in cols]].mean(axis=1)
     return df
 
 def run():
@@ -118,7 +116,7 @@ def run():
 
     df_norm = norm_features(df)
     out_cols = ["论文名称", "数据来源", "赛题类型"] + FEATURES + \
-               [c + "_归一" for c in FEATURES if c != "章节完整度"] + \
+               [c + "_z" for c in FEATURES] + \
                list(GROUP_DEF.keys()) + ["综合质量得分", "等级"]
     df_norm["数据来源"] = "自动识别"
     df_norm["赛题类型"] = df["赛题类型"]

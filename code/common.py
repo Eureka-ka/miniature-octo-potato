@@ -283,6 +283,18 @@ def apply_refs(arr, kind, ref):
         return np.minimum(1.0, arr / ref)
     raise ValueError(kind)
 
+def zscore_norm(arr, direction=1):
+    """Z-score 标准化：z=(x-mean)/std；std≈0 时取 0；direction<0 取负（反向指标）。"""
+    a = np.asarray(arr, dtype=float)
+    std = a.std()
+    if std < 1e-12:
+        z = np.zeros_like(a)
+    else:
+        z = (a - a.mean()) / std
+    if direction < 0:
+        z = -z
+    return z
+
 def membership_vector(s):
     """连续隶属度函数：由归一化得分 s∈[0,1] 得到五级隶属度向量(和为1)。"""
     s = float(np.clip(s, 0.0, 1.0))
