@@ -45,6 +45,8 @@ TEMPLATE = {
 AI_WEIGHTS = {"句子重复度": 0.30, "句式变化性": 0.25, "段落均匀度": 0.20,
               "逻辑异常度": 0.15, "术语偏离度": 0.10}
 AI_LEVELS = [(0.70, "高"), (0.30, "中")]     # >=0.70 高，>=0.30 中，否则低
+EXTRA_AI_BOOST = 0.10                 # 高AI论文：AI相关指标额外提升（降低AI痕迹）
+AI_BOOST_INDICATORS = ["u11", "u13", "u44"]   # 逻辑连接、论证闭环、文本冗余
 
 # 参考论文 p1_extract_features.py 的连接词词典（口径一致）
 REF_LOGICAL_CONNECTORS = [
@@ -178,21 +180,21 @@ def detect_issues(t, s_scores, name):
     return issues
 
 def uplift_for(s):
-    if s < 0.30: return 0.25
-    if s < 0.50: return 0.18
-    if s < 0.70: return 0.10
-    return 0.04
+    if s < 0.30: return 0.30
+    if s < 0.50: return 0.22
+    if s < 0.70: return 0.12
+    return 0.05
 
 def revision_plan(name, s_scores, issues, t):
     """按薄弱指标 + 检测问题生成修改方案。"""
     plan = []
     covered = set()
-    weak = [(ind, s) for ind, s in s_scores.items() if s < 0.5]
+    weak = [(ind, s) for ind, s in s_scores.items() if s < 0.6]
     for ind, s in sorted(weak, key=lambda x: x[1]):
         covered.add(ind)
         plan.append({"论文": name, "薄弱指标": C.INDICATOR_META[ind][0], "指标编码": ind,
-                     "当前得分": round(s, 3), "问题定位": "指标得分低于0.5（" + C.INDICATOR_META[ind][1] + "维度）",
-                     "具体修改建议": TEMPLATE[ind], "预计改进后得分": round(min(0.95, s + uplift_for(s)), 3)})
+                     "当前得分": round(s, 3), "问题定位": "指标得分低于0.6（" + C.INDICATOR_META[ind][1] + "维度）",
+                     "具体修改建议": TEMPLATE[ind], "预计改进后得分": round(min(1.0, s + uplift_for(s)), 3)})
     for loc, desc, inds in issues:
         ind = inds.split("/")[0]
         if ind in covered or inds == "u31/u33":
@@ -204,13 +206,13 @@ def revision_plan(name, s_scores, issues, t):
                              "当前得分": round(s_scores[ii], 3),
                              "问题定位": f"检测发现（{loc}）：{desc}",
                              "具体修改建议": TEMPLATE[ii],
-                             "预计改进后得分": round(min(0.95, s_scores[ii] + uplift_for(s_scores[ii])), 3)})
+                             "预计改进后得分": round(min(1.0, s_scores[ii] + uplift_for(s_scores[ii])), 3)})
     return plan
 
 def optimize(name, s_scores, plan):
     new_s = dict(s_scores)
     for p in plan:
-        new_s[p["指标编码"]] = min(0.95, p["预计改进后得分"])
+        new_s[p["指标编码"]] = min(1.0, p["预计改进后得分"])
     return new_s
 
 def run():
@@ -246,25 +248,11 @@ def run():
         ai_raw = ref_ai_raw("\n\n".join(body_pages))
         issues = detect_issues(t, s_scores, f)
         plan = revision_plan(f, s_scores, issues, t)
-        new_s = optimize(f, s_scores, plan)
-        norm2 = {dim: [new_s[ind] for ind in problem1.dim_inds(dim)] for dim in C.U_ORDER}
-        B2, score2 = scorer.score(norm2, ind_order)
-        level2 = C.level_by_score(score2)
-        # 边际贡献
-        margin = []
-        for p in plan:
-            ind = p["指标编码"]
-            tmp = dict(s_scores); tmp[ind] = min(0.95, p["预计改进后得分"])
-            nm = {d: [tmp[i] for i in problem1.dim_inds(d)] for d in C.U_ORDER}
-            _, sc = scorer.score(nm, ind_order)
-            margin.append({"指标": C.INDICATOR_META[ind][0], "改进量": round(new_s[ind] - s_scores[ind], 3),
-                           "得分增益": round(sc - score, 2)})
-        margin = sorted(margin, key=lambda x: -x["得分增益"])
         results.append({"name": f, "topic": topic, "t": t, "s": s_scores, "dim": dim_scores,
                         "score": score, "level": level, "B": B,
                         "ai_raw": ai_raw, "ai": None, "ai_level": None, "ai_scores": None,
-                        "issues": issues, "plan": plan, "new_s": new_s,
-                        "score2": score2, "level2": level2, "margin": margin})
+                        "issues": issues, "plan": plan,
+                        "new_s": None, "score2": None, "level2": None, "margin": None})
 
     # 参考算法：5 指标（附件1参照偏离）在 3 篇内 min-max 归一后加权
     _ref = ref_ai_reference_stats()
@@ -273,6 +261,25 @@ def run():
         r["ai_scores"] = {k: float(_norm[k][j]) for k in AI_WEIGHTS}
         r["ai"] = float(_idx[j])
         r["ai_level"] = ai_level_of(r["ai"])
+    # 优化后得分预测（放到 AI 判定之后，高AI论文额外提升AI相关指标）
+    for r in results:
+        new_s = optimize(r["name"], r["s"], r["plan"])
+        if r["ai_level"] == "高":
+            for ind in AI_BOOST_INDICATORS:
+                new_s[ind] = min(1.0, new_s[ind] + EXTRA_AI_BOOST)
+        norm2 = {dim: [new_s[ind] for ind in problem1.dim_inds(dim)] for dim in C.U_ORDER}
+        B2, score2 = scorer.score(norm2, ind_order)
+        level2 = C.level_by_score(score2)
+        margin = []
+        for p in r["plan"]:
+            ind = p["指标编码"]
+            tmp = dict(r["s"]); tmp[ind] = min(1.0, p["预计改进后得分"])
+            nm = {d: [tmp[i] for i in problem1.dim_inds(d)] for d in C.U_ORDER}
+            _, sc = scorer.score(nm, ind_order)
+            margin.append({"指标": C.INDICATOR_META[ind][0], "改进量": round(new_s[ind] - r["s"][ind], 3),
+                           "得分增益": round(sc - r["score"], 2)})
+        margin = sorted(margin, key=lambda x: -x["得分增益"])
+        r["new_s"] = new_s; r["score2"] = score2; r["level2"] = level2; r["margin"] = margin
 
     export_excel(results, os.path.join(C.OUT, "problem3_results.xlsx"))
     charts(results)
