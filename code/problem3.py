@@ -23,8 +23,9 @@ import quantify
 
 BOILERPLATE = ["综上所述", "本研究", "值得注意的是", "总而言之", "进一步", "此外",
                "通过上述", "本文通过", "随着", "不仅", "而且", "在此基础上"]
-AI_WEIGHTS = {"句长均匀度": 0.20, "段落均匀度": 0.15, "套话密度": 0.20,
-              "连接词密度": 0.10, "低具体性": 0.20, "重复率": 0.15}
+AI_WEIGHTS = {"句长均匀度": 0.15, "段落均匀度": 0.12, "套话密度": 0.15,
+              "连接词密度": 0.08, "低具体性": 0.15, "重复率": 0.12,
+              "逻辑异常度": 0.11, "术语偏离度": 0.12}
 AI_LEVELS = [(0.55, "高"), (0.40, "中")]     # 依次判断：>=0.55 高，>=0.40 中，否则低
 
 TEMPLATE = {
@@ -75,6 +76,14 @@ def ai_features(t):
     rep_rate = sum(v - 1 for v in seen.values() if v > 1) / max(1, len(seen))
     figtab = len(re.findall(r"(?:图|表)\s*\d+", t["full"]))
     figtab_dens = figtab / max(1, t["total_chars"]) * 1000.0
+    # 术语丰富度：前6000字固定样本（减长度偏置）；jieba 缺失时用字符二元组 TTR 兜底
+    sample = t["clean"][:6000]
+    if quantify._HAS_JIEBA:
+        toks = [w for w in quantify.jieba.cut(sample) if w.strip() and not w.strip().isdigit()]
+        term_rich = len(set(toks)) / len(toks) if toks else 0.0
+    else:
+        bigrams = [sample[i:i + 2] for i in range(max(0, len(sample) - 1))]
+        term_rich = len(set(bigrams)) / len(bigrams) if bigrams else 0.0
     return {"句长均匀度": _sub_lower(cv_sent, 0.10, 0.35),
             "段落均匀度": _sub_lower(cv_par, 0.15, 0.45),
             "套话密度": _sub_up(boiler_dens, 2.0),
@@ -83,7 +92,7 @@ def ai_features(t):
             "重复率": _sub_up(rep_rate, 0.12),
             "_cv_sent": cv_sent, "_cv_par": cv_par, "_boiler_dens": boiler_dens,
             "_conn_dens": conn_dens, "_digit_dens": digit_dens, "_rep_rate": rep_rate,
-            "_figtab_dens": figtab_dens}
+            "_figtab_dens": figtab_dens, "_term_rich": term_rich}
 
 def ai_index(feat):
     idx = sum(AI_WEIGHTS[k] * feat[k] for k in AI_WEIGHTS)
@@ -93,6 +102,21 @@ def ai_index(feat):
             level = lv
             break
     return idx, level
+
+
+def add_deviation_features(feat_list):
+    """补充“相对批次均值偏离”特征（参考论文 α4 逻辑异常度 / α5 术语偏离度）：
+    dev=|x-x̄|/(x̄+ε)，子得分=min(1, dev/0.30)。需先收集全部论文的绝对特征后再调用。"""
+    def dev_score(vals):
+        arr = np.asarray(vals, float)
+        m = arr.mean()
+        devs = np.abs(arr - m) / (abs(m) + 1e-9)
+        return np.minimum(1.0, devs / 0.30)
+    conn = dev_score([f["_conn_dens"] for f in feat_list])
+    term = dev_score([f["_term_rich"] for f in feat_list])
+    for f, c, t in zip(feat_list, conn, term):
+        f["逻辑异常度"] = float(c)
+        f["术语偏离度"] = float(t)
 
 def detect_issues(t, s_scores, name):
     issues = []
@@ -190,7 +214,6 @@ def run():
             dim_scores[dim] = float((scorer.A[f"A{j+1}"] @ Rj) @ C.GRADE_SCORES)
         level = C.level_by_score(score)
         feat = ai_features(t)
-        ai, ai_level = ai_index(feat)
         issues = detect_issues(t, s_scores, f)
         plan = revision_plan(f, s_scores, issues, t)
         new_s = optimize(f, s_scores, plan)
@@ -209,9 +232,14 @@ def run():
         margin = sorted(margin, key=lambda x: -x["得分增益"])
         results.append({"name": f, "topic": topic, "t": t, "s": s_scores, "dim": dim_scores,
                         "score": score, "level": level, "B": B,
-                        "feat": feat, "ai": ai, "ai_level": ai_level,
+                        "feat": feat, "ai": None, "ai_level": None,
                         "issues": issues, "plan": plan, "new_s": new_s,
                         "score2": score2, "level2": level2, "margin": margin})
+
+    # 相对均值偏离特征需要批次统计，先收集全部绝对特征再补充
+    add_deviation_features([r["feat"] for r in results])
+    for r in results:
+        r["ai"], r["ai_level"] = ai_index(r["feat"])
 
     export_excel(results, os.path.join(C.OUT, "problem3_results.xlsx"))
     charts(results)
@@ -254,15 +282,15 @@ def export_excel(results, path):
     # sheet2 AI检测
     ws2 = wb.create_sheet("AI痕迹检测")
     ai_headers = ["论文"] + list(AI_WEIGHTS.keys()) + ["AI辅助指数", "辅助程度",
-                 "句长CV", "段落CV", "套话密度‰", "连接词密度‰", "数字密度‰", "重复率", "图表密度‰"]
+                 "句长CV", "段落CV", "套话密度‰", "连接词密度‰", "术语丰富度", "数字密度‰", "重复率", "图表密度‰"]
     ai_rows = []
     for r in results:
         f = r["feat"]
         ai_rows.append([r["name"]] + [round(f[k], 3) for k in AI_WEIGHTS] + [round(r["ai"], 3), r["ai_level"],
                        round(f["_cv_sent"], 3), round(f["_cv_par"], 3), round(f["_boiler_dens"], 3),
-                       round(f["_conn_dens"], 3), round(f["_digit_dens"], 3), round(f["_rep_rate"], 4),
-                       round(f["_figtab_dens"], 3)])
-    sheet(ws2, ai_headers, ai_rows, [10] + [12]*6 + [12, 12] + [10, 10, 12, 12, 12, 12, 12])
+                       round(f["_conn_dens"], 3), round(f["_term_rich"], 4), round(f["_digit_dens"], 3),
+                       round(f["_rep_rate"], 4), round(f["_figtab_dens"], 3)])
+    sheet(ws2, ai_headers, ai_rows, [10] + [12]*8 + [12, 12] + [10, 10, 12, 12, 12, 12, 12, 12])
     # sheet3 问题定位
     ws3 = wb.create_sheet("逻辑断层与问题定位")
     q_rows = []
