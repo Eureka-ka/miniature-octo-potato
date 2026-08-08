@@ -1,0 +1,38 @@
+[
+  {
+    "paper_id": "A3_3-1",
+    "ai_category": "独立撰写(Independent)",
+    "ai_percentage": 17.0,
+    "description": "论文主要体现人工撰写特征，AI参与度较低",
+    "detailed_signals": {
+      "AI重复度": 0.0488,
+      "句式均匀度": 1.0,
+      "段落一致性": 0.6408,
+      "术语集中度": 0.0969
+    }
+  },
+  {
+    "paper_id": "A3_3-2",
+    "ai_category": "AI辅助(AI-Assisted)",
+    "ai_percentage": 45.0,
+    "description": "论文存在AI辅助痕迹，但主体为人工完成",
+    "detailed_signals": {
+      "AI重复度": 0.0405,
+      "句式均匀度": 1.0,
+      "段落一致性": 1.0,
+      "术语集中度": 0.1458
+    }
+  },
+  {
+    "paper_id": "A3_3-3",
+    "ai_category": "AI主导(AI-Dominant)",
+    "ai_percentage": 72.9,
+    "description": "论文可能存在大量AI生成内容，需大幅人工重写",
+    "detailed_signals": {
+      "AI重复度": 0.1204,
+      "句式均匀度": 1.0,
+      "段落一致性": 1.0,
+      "术语集中度": 0.2058
+    }
+  }
+]
