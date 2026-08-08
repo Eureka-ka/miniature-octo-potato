@@ -60,6 +60,38 @@ def _sub_up(x, ref):
 def _sub_down(x, ref):
     return _clip01(1.0 - x / ref)
 
+
+def _term_richness(clean):
+    """术语丰富度：jieba 分词（去空白/纯数字）unique/total，取前6000字固定样本减长度偏置；
+    无 jieba 时用字符二元组 TTR 兜底。"""
+    sample = clean[:6000]
+    if quantify._HAS_JIEBA:
+        toks = [w for w in quantify.jieba.cut(sample) if w.strip() and not w.strip().isdigit()]
+        return len(set(toks)) / len(toks) if toks else 0.0
+    bigrams = [sample[i:i + 2] for i in range(max(0, len(sample) - 1))]
+    return len(set(bigrams)) / len(bigrams) if bigrams else 0.0
+
+
+def ai_reference_stats():
+    """附件1参照组（剔除图像型扫描件，n≈29）的连接词密度/术语丰富度均值（全文口径）。
+    结果缓存到 output/ai_reference_附件1.json，删除该文件即重算。"""
+    cache = os.path.join(C.OUT, "ai_reference_附件1.json")
+    if os.path.exists(cache):
+        return C.load_json(cache)
+    conns, terms = [], []
+    for name in sorted(os.listdir(C.ATT1)):
+        if not name.lower().endswith(".pdf"):
+            continue
+        pages, full = C.extract_pdf(os.path.join(C.ATT1, name))
+        if C.is_image_only(full):
+            continue
+        t = C.analyze_text(pages, full)
+        conns.append(t["connector_count"] / max(1, t["total_chars"]) * 1000.0)
+        terms.append(_term_richness(t["clean"]))
+    ref = {"conn_dens_mean": float(np.mean(conns)), "term_rich_mean": float(np.mean(terms)), "n": len(conns)}
+    C.save_json(ref, cache)
+    return ref
+
 def ai_features(t):
     sents = [re.sub(r"\s+", "", s) for s in t["sentences"] if len(re.sub(r"\s+", "", s)) > 0]
     slens = np.array([len(s) for s in sents])
@@ -76,14 +108,7 @@ def ai_features(t):
     rep_rate = sum(v - 1 for v in seen.values() if v > 1) / max(1, len(seen))
     figtab = len(re.findall(r"(?:图|表)\s*\d+", t["full"]))
     figtab_dens = figtab / max(1, t["total_chars"]) * 1000.0
-    # 术语丰富度：前6000字固定样本（减长度偏置）；jieba 缺失时用字符二元组 TTR 兜底
-    sample = t["clean"][:6000]
-    if quantify._HAS_JIEBA:
-        toks = [w for w in quantify.jieba.cut(sample) if w.strip() and not w.strip().isdigit()]
-        term_rich = len(set(toks)) / len(toks) if toks else 0.0
-    else:
-        bigrams = [sample[i:i + 2] for i in range(max(0, len(sample) - 1))]
-        term_rich = len(set(bigrams)) / len(bigrams) if bigrams else 0.0
+    term_rich = _term_richness(t["clean"])
     return {"句长均匀度": _sub_lower(cv_sent, 0.10, 0.35),
             "段落均匀度": _sub_lower(cv_par, 0.15, 0.45),
             "套话密度": _sub_up(boiler_dens, 2.0),
@@ -104,16 +129,15 @@ def ai_index(feat):
     return idx, level
 
 
-def add_deviation_features(feat_list):
-    """补充“相对批次均值偏离”特征（参考论文 α4 逻辑异常度 / α5 术语偏离度）：
-    dev=|x-x̄|/(x̄+ε)，子得分=min(1, dev/0.30)。需先收集全部论文的绝对特征后再调用。"""
-    def dev_score(vals):
+def add_deviation_features(feat_list, conn_ref, term_ref):
+    """补充“相对附件1参照均值偏离”特征（参考论文 α4 逻辑异常度 / α5 术语偏离度）：
+    dev=|x-ref|/(ref+ε)，子得分=min(1, dev/0.30)。需先收集 A3 绝对特征、并加载参照均值后再调用。"""
+    def dev_score(vals, ref):
         arr = np.asarray(vals, float)
-        m = arr.mean()
-        devs = np.abs(arr - m) / (abs(m) + 1e-9)
+        devs = np.abs(arr - ref) / (abs(ref) + 1e-9)
         return np.minimum(1.0, devs / 0.30)
-    conn = dev_score([f["_conn_dens"] for f in feat_list])
-    term = dev_score([f["_term_rich"] for f in feat_list])
+    conn = dev_score([f["_conn_dens"] for f in feat_list], conn_ref)
+    term = dev_score([f["_term_rich"] for f in feat_list], term_ref)
     for f, c, t in zip(feat_list, conn, term):
         f["逻辑异常度"] = float(c)
         f["术语偏离度"] = float(t)
@@ -236,8 +260,9 @@ def run():
                         "issues": issues, "plan": plan, "new_s": new_s,
                         "score2": score2, "level2": level2, "margin": margin})
 
-    # 相对均值偏离特征需要批次统计，先收集全部绝对特征再补充
-    add_deviation_features([r["feat"] for r in results])
+    # 相对均值偏离特征以附件1为参照组，先收集 A3 绝对特征、再按参照均值补充
+    _ref = ai_reference_stats()
+    add_deviation_features([r["feat"] for r in results], _ref["conn_dens_mean"], _ref["term_rich_mean"])
     for r in results:
         r["ai"], r["ai_level"] = ai_index(r["feat"])
 
