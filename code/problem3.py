@@ -21,13 +21,6 @@ import common as C
 import problem1
 import quantify
 
-BOILERPLATE = ["综上所述", "本研究", "值得注意的是", "总而言之", "进一步", "此外",
-               "通过上述", "本文通过", "随着", "不仅", "而且", "在此基础上"]
-AI_WEIGHTS = {"句长均匀度": 0.15, "段落均匀度": 0.12, "套话密度": 0.15,
-              "连接词密度": 0.08, "低具体性": 0.15, "重复率": 0.12,
-              "逻辑异常度": 0.11, "术语偏离度": 0.12}
-AI_LEVELS = [(0.55, "高"), (0.40, "中")]     # 依次判断：>=0.55 高，>=0.40 中，否则低
-
 TEMPLATE = {
     "u11": "在问题分析、模型推导与结论处补充“因此、综上、进而、由此可得”等逻辑连接词，增强论证衔接",
     "u12": "在摘要与各问题小节中强化对赛题关键词（康养/资源/健康等）的呼应与覆盖",
@@ -47,100 +40,112 @@ TEMPLATE = {
     "u44": "删减重复赘述，压缩冗余表达，提高信息密度",
 }
 
-def _clip01(x):
-    return float(np.clip(x, 0.0, 1.0))
 
-def _sub_lower(x, lo, hi):
-    """指标值越低越AI-like（均匀度）：(hi-x)/(hi-lo)"""
-    return _clip01((hi - x) / (hi - lo))
+# ---- 参考论文 AI 检测（5维：3篇内 min-max + 附件1参照偏离）----
+AI_WEIGHTS = {"句子重复度": 0.30, "句式变化性": 0.25, "段落均匀度": 0.20,
+              "逻辑异常度": 0.15, "术语偏离度": 0.10}
+AI_LEVELS = [(0.70, "高"), (0.30, "中")]     # >=0.70 高，>=0.30 中，否则低
 
-def _sub_up(x, ref):
-    return _clip01(x / ref)
-
-def _sub_down(x, ref):
-    return _clip01(1.0 - x / ref)
-
-
-def _term_richness(clean):
-    """术语丰富度：jieba 分词（去空白/纯数字）unique/total，取前6000字固定样本减长度偏置；
-    无 jieba 时用字符二元组 TTR 兜底。"""
-    sample = clean[:6000]
-    if quantify._HAS_JIEBA:
-        toks = [w for w in quantify.jieba.cut(sample) if w.strip() and not w.strip().isdigit()]
-        return len(set(toks)) / len(toks) if toks else 0.0
-    bigrams = [sample[i:i + 2] for i in range(max(0, len(sample) - 1))]
-    return len(set(bigrams)) / len(bigrams) if bigrams else 0.0
+# 参考论文 p1_extract_features.py 的连接词词典（口径一致）
+REF_LOGICAL_CONNECTORS = [
+    "因此", "所以", "因而", "从而", "于是", "故", "因为", "由于", "基于", "鉴于",
+    "如果", "若", "假设", "假定", "设", "则", "那么", "即", "也就是说", "换言之",
+    "首先", "其次", "再次", "最后", "然后", "接着", "一方面", "另一方面", "此外", "另外",
+    "同时", "然而", "但是", "不过", "尽管", "虽然", "显然", "可见", "由此", "综上所述",
+    "总之", "根据", "依照", "按照", "不仅", "而且", "并且", "以及", "换言之",
+    "确切地说", "具体而言", "同理", "类似地", "相应地", "反之", "相反", "相对而言",
+    "特别地", "尤其", "尤其是",
+]
+_REF_TERM = re.compile(r"[一-鿿]{2,}")
 
 
-def ai_reference_stats():
-    """附件1参照组（剔除图像型扫描件，n≈29）的连接词密度/术语丰富度均值（全文口径）。
-    结果缓存到 output/ai_reference_附件1.json，删除该文件即重算。"""
-    cache = os.path.join(C.OUT, "ai_reference_附件1.json")
+def ref_ai_raw(body_full):
+    """按参考论文公式计算单篇 5 个 AI 原始量（body_full 为剔除代码页后的正文）。"""
+    text = body_full
+    # 1) 句首重复率：句首 8 字重复占比
+    starts = [s.strip()[:8] for s in re.split(r"[。！？\n]+", text) if len(s.strip()) > 10]
+    if len(starts) < 2:
+        rep_ratio = 0.0
+    else:
+        sc = {}
+        for s in starts:
+            sc[s] = sc.get(s, 0) + 1
+        repeated = sum(v - 1 for v in sc.values() if v > 1)
+        rep_ratio = repeated / len(starts)
+    # 2) 句式变化性（burstiness = 句长标准差/均值）
+    s_lens = [len(s) for s in re.split(r"[。！？\n]+", text) if len(s.strip()) > 3]
+    if len(s_lens) < 2:
+        burstiness = 0.0
+    else:
+        m = np.mean(s_lens)
+        burstiness = float(np.std(s_lens) / m) if m > 0 else 0.0
+    # 3) 段落均匀度（页块长度变异系数）
+    p_lens = [len(p) for p in text.split("\n\n") if len(p.strip()) > 20]
+    if len(p_lens) < 2:
+        para_uniformity = 0.0
+    else:
+        m = np.mean(p_lens)
+        para_uniformity = float(np.std(p_lens) / m) if m > 0 else 0.0
+    # 4) 逻辑连接词密度（每千中文字）
+    chinese = len(re.findall(r"[一-鿿]", text))
+    connectors = sum(text.count(w) for w in REF_LOGICAL_CONNECTORS)
+    logical_density = connectors / (chinese / 1000) if chinese > 0 else 0.0
+    # 5) 术语丰富度（中文二字串 unique/total）
+    cw = _REF_TERM.findall(text)
+    term_rich = len(set(cw)) / len(cw) if cw else 0.0
+    return {"rep_ratio": rep_ratio, "burstiness": burstiness, "para_uniformity": para_uniformity,
+            "logical_density": logical_density, "term_rich": term_rich}
+
+
+def ref_ai_reference_stats():
+    """附件1参照均值（逻辑连接词密度/术语丰富度，正文口径）；缓存 output/ai_reference_ref.json。"""
+    cache = os.path.join(C.OUT, "ai_reference_ref.json")
     if os.path.exists(cache):
         return C.load_json(cache)
-    conns, terms = [], []
+    ld, tr = [], []
     for name in sorted(os.listdir(C.ATT1)):
         if not name.lower().endswith(".pdf"):
             continue
         pages, full = C.extract_pdf(os.path.join(C.ATT1, name))
         if C.is_image_only(full):
             continue
-        t = C.analyze_text(pages, full)
-        conns.append(t["connector_count"] / max(1, t["total_chars"]) * 1000.0)
-        terms.append(_term_richness(t["clean"]))
-    ref = {"conn_dens_mean": float(np.mean(conns)), "term_rich_mean": float(np.mean(terms)), "n": len(conns)}
+        body_pages, body_full = quantify.strip_code_pages(pages)
+        raw = ref_ai_raw("\n\n".join(body_pages))
+        ld.append(raw["logical_density"])
+        tr.append(raw["term_rich"])
+    ref = {"logical_density_mean": float(np.mean(ld)), "term_rich_mean": float(np.mean(tr)), "n": len(ld)}
     C.save_json(ref, cache)
     return ref
 
-def ai_features(t):
-    sents = [re.sub(r"\s+", "", s) for s in t["sentences"] if len(re.sub(r"\s+", "", s)) > 0]
-    slens = np.array([len(s) for s in sents])
-    cv_sent = float(slens.std() / slens.mean()) if len(slens) > 1 and slens.mean() > 0 else 0.0
-    pars = np.array([len(re.sub(r"\s+", "", p)) for p in t["paragraphs"] if len(p.strip()) > 0])
-    cv_par = float(pars.std() / pars.mean()) if len(pars) > 1 and pars.mean() > 0 else 0.0
-    boiler = sum(t["clean"].count(w) for w in BOILERPLATE)
-    boiler_dens = boiler / max(1, t["total_chars"]) * 1000.0
-    conn_dens = t["connector_count"] / max(1, t["total_chars"]) * 1000.0
-    digit_dens = sum(1 for ch in t["full"] if ch.isdigit()) / max(1, t["total_chars"]) * 1000.0
-    seen = {}
-    for s in sents:
-        seen[s[:20]] = seen.get(s[:20], 0) + 1
-    rep_rate = sum(v - 1 for v in seen.values() if v > 1) / max(1, len(seen))
-    figtab = len(re.findall(r"(?:图|表)\s*\d+", t["full"]))
-    figtab_dens = figtab / max(1, t["total_chars"]) * 1000.0
-    term_rich = _term_richness(t["clean"])
-    return {"句长均匀度": _sub_lower(cv_sent, 0.10, 0.35),
-            "段落均匀度": _sub_lower(cv_par, 0.15, 0.45),
-            "套话密度": _sub_up(boiler_dens, 2.0),
-            "连接词密度": _sub_up(conn_dens, 3.0),
-            "低具体性": _sub_down(digit_dens, 8.0),
-            "重复率": _sub_up(rep_rate, 0.12),
-            "_cv_sent": cv_sent, "_cv_par": cv_par, "_boiler_dens": boiler_dens,
-            "_conn_dens": conn_dens, "_digit_dens": digit_dens, "_rep_rate": rep_rate,
-            "_figtab_dens": figtab_dens, "_term_rich": term_rich}
 
-def ai_index(feat):
-    idx = sum(AI_WEIGHTS[k] * feat[k] for k in AI_WEIGHTS)
-    level = "低"
+def ref_ai_index(raw_list, ref):
+    """参考论文：5 指标（含相对附件1参照偏离），3 篇内 min-max 归一后加权。"""
+    def arr(key):
+        return np.array([r[key] for r in raw_list], float)
+    ld, tr = arr("logical_density"), arr("term_rich")
+    indicators = {
+        "句子重复度": arr("rep_ratio"),
+        "句式变化性": 1.0 / (np.abs(arr("burstiness") - 0.7) + 0.3),
+        "段落均匀度": arr("para_uniformity"),
+        "逻辑异常度": np.abs(ld - ref["logical_density_mean"]) / (ref["logical_density_mean"] + 1e-10),
+        "术语偏离度": np.abs(tr - ref["term_rich_mean"]) / (ref["term_rich_mean"] + 1e-10),
+    }
+    norm = {}
+    for k, vals in indicators.items():
+        vmin, vmax = vals.min(), vals.max()
+        norm[k] = (vals - vmin) / (vmax - vmin + 1e-10)
+    idx = np.zeros(len(raw_list))
+    for k, w in AI_WEIGHTS.items():
+        idx += w * norm[k]
+    return norm, idx
+
+
+def ai_level_of(idx):
     for thr, lv in AI_LEVELS:
         if idx >= thr:
-            level = lv
-            break
-    return idx, level
+            return lv
+    return "低"
 
-
-def add_deviation_features(feat_list, conn_ref, term_ref):
-    """补充“相对附件1参照均值偏离”特征（参考论文 α4 逻辑异常度 / α5 术语偏离度）：
-    dev=|x-ref|/(ref+ε)，子得分=min(1, dev/0.30)。需先收集 A3 绝对特征、并加载参照均值后再调用。"""
-    def dev_score(vals, ref):
-        arr = np.asarray(vals, float)
-        devs = np.abs(arr - ref) / (abs(ref) + 1e-9)
-        return np.minimum(1.0, devs / 0.30)
-    conn = dev_score([f["_conn_dens"] for f in feat_list], conn_ref)
-    term = dev_score([f["_term_rich"] for f in feat_list], term_ref)
-    for f, c, t in zip(feat_list, conn, term):
-        f["逻辑异常度"] = float(c)
-        f["术语偏离度"] = float(t)
 
 def detect_issues(t, s_scores, name):
     issues = []
@@ -237,7 +242,8 @@ def run():
             Rj = np.array([scorer.membership(ind, s_scores[ind]) for ind in problem1.dim_inds(dim)])
             dim_scores[dim] = float((scorer.A[f"A{j+1}"] @ Rj) @ C.GRADE_SCORES)
         level = C.level_by_score(score)
-        feat = ai_features(t)
+        body_pages, _ = quantify.strip_code_pages(pages)
+        ai_raw = ref_ai_raw("\n\n".join(body_pages))
         issues = detect_issues(t, s_scores, f)
         plan = revision_plan(f, s_scores, issues, t)
         new_s = optimize(f, s_scores, plan)
@@ -256,15 +262,17 @@ def run():
         margin = sorted(margin, key=lambda x: -x["得分增益"])
         results.append({"name": f, "topic": topic, "t": t, "s": s_scores, "dim": dim_scores,
                         "score": score, "level": level, "B": B,
-                        "feat": feat, "ai": None, "ai_level": None,
+                        "ai_raw": ai_raw, "ai": None, "ai_level": None, "ai_scores": None,
                         "issues": issues, "plan": plan, "new_s": new_s,
                         "score2": score2, "level2": level2, "margin": margin})
 
-    # 相对均值偏离特征以附件1为参照组，先收集 A3 绝对特征、再按参照均值补充
-    _ref = ai_reference_stats()
-    add_deviation_features([r["feat"] for r in results], _ref["conn_dens_mean"], _ref["term_rich_mean"])
-    for r in results:
-        r["ai"], r["ai_level"] = ai_index(r["feat"])
+    # 参考算法：5 指标（附件1参照偏离）在 3 篇内 min-max 归一后加权
+    _ref = ref_ai_reference_stats()
+    _norm, _idx = ref_ai_index([r["ai_raw"] for r in results], _ref)
+    for j, r in enumerate(results):
+        r["ai_scores"] = {k: float(_norm[k][j]) for k in AI_WEIGHTS}
+        r["ai"] = float(_idx[j])
+        r["ai_level"] = ai_level_of(r["ai"])
 
     export_excel(results, os.path.join(C.OUT, "problem3_results.xlsx"))
     charts(results)
@@ -307,15 +315,14 @@ def export_excel(results, path):
     # sheet2 AI检测
     ws2 = wb.create_sheet("AI痕迹检测")
     ai_headers = ["论文"] + list(AI_WEIGHTS.keys()) + ["AI辅助指数", "辅助程度",
-                 "句长CV", "段落CV", "套话密度‰", "连接词密度‰", "术语丰富度", "数字密度‰", "重复率", "图表密度‰"]
+                 "句首重复率", "句式变化性(原始)", "段落均匀度(原始)", "逻辑连接词密度", "术语丰富度"]
     ai_rows = []
     for r in results:
-        f = r["feat"]
-        ai_rows.append([r["name"]] + [round(f[k], 3) for k in AI_WEIGHTS] + [round(r["ai"], 3), r["ai_level"],
-                       round(f["_cv_sent"], 3), round(f["_cv_par"], 3), round(f["_boiler_dens"], 3),
-                       round(f["_conn_dens"], 3), round(f["_term_rich"], 4), round(f["_digit_dens"], 3),
-                       round(f["_rep_rate"], 4), round(f["_figtab_dens"], 3)])
-    sheet(ws2, ai_headers, ai_rows, [10] + [12]*8 + [12, 12] + [10, 10, 12, 12, 12, 12, 12, 12])
+        f = r["ai_raw"]; sc = r["ai_scores"]
+        ai_rows.append([r["name"]] + [round(sc[k], 3) for k in AI_WEIGHTS] + [round(r["ai"], 3), r["ai_level"],
+                       round(f["rep_ratio"], 4), round(f["burstiness"], 3), round(f["para_uniformity"], 3),
+                       round(f["logical_density"], 3), round(f["term_rich"], 4)])
+    sheet(ws2, ai_headers, ai_rows, [10] + [12]*5 + [12, 12] + [12, 14, 16, 16, 12])
     # sheet3 问题定位
     ws3 = wb.create_sheet("逻辑断层与问题定位")
     q_rows = []
